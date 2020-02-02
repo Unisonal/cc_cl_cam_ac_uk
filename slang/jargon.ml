@@ -109,14 +109,26 @@ let string_of_status = function
   | HeapIndexOutOfBound  -> "heap index out-of-bound" 
   | StackUnderflow       -> "stack underflow" 
 
-let string_of_stack_item = function 
-  | STACK_INT i      -> "STACK_INT " ^ (string_of_int i)
-  | STACK_BOOL true  -> "STACK_BOOL true"
-  | STACK_BOOL false -> "STACK_BOOL false"
-  | STACK_UNIT       -> "STACK_UNIT"
-  | STACK_HI i       -> "STACK_HI " ^ (string_of_int i)
-  | STACK_RA i       -> "STACK_RA " ^ (string_of_int i)
-  | STACK_FP i       -> "STACK_FP " ^ (string_of_int i)
+let string_of_stack_item showType = 
+  if(showType) then (
+    function 
+      | STACK_INT i      -> "STACK_INT " ^ (string_of_int i)
+      | STACK_BOOL true  -> "STACK_BOOL true"
+      | STACK_BOOL false -> "STACK_BOOL false"
+      | STACK_UNIT       -> "STACK_UNIT"
+      | STACK_HI i       -> "STACK_HI " ^ (string_of_int i)
+      | STACK_RA i       -> "STACK_RA " ^ (string_of_int i)
+      | STACK_FP i       -> "STACK_FP " ^ (string_of_int i)
+  )else (
+    function 
+      | STACK_INT i      -> (string_of_int i)
+      | STACK_BOOL true  -> "true"
+      | STACK_BOOL false -> "false"
+      | STACK_UNIT       -> "unit"
+      | STACK_HI i       -> (string_of_int i)
+      | STACK_RA i       -> (string_of_int i)
+      | STACK_FP i       -> (string_of_int i)
+  )
 
 let string_of_heap_type = function 
     | HT_PAIR    -> "HT_PAIR"
@@ -152,7 +164,7 @@ let string_of_instruction = function
  | MK_INL   -> "MK_INL"
  | MK_INR   -> "MK_INR"
  | MK_REF   -> "MK_REF"
- | PUSH v   -> "PUSH " ^ (string_of_stack_item v) 
+ | PUSH v   -> "PUSH " ^ (string_of_stack_item true v) 
  | LOOKUP p -> "LOOKUP " ^ (string_of_value_path p) 
  | TEST l   -> "TEST " ^ (string_of_location l)
  | CASE l   -> "CASE " ^ (string_of_location l)
@@ -186,7 +198,7 @@ let string_of_stack(sp, stack) =
     let rec aux carry j = 
          if j = sp then carry 
          else aux ((string_of_int j) ^ ": " 
-                   ^ (string_of_stack_item (Array.get stack j)) 
+                   ^ (string_of_stack_item true (Array.get stack j)) 
                    ^ "\n" ^ carry) (j + 1) 
     in aux "" 0
 
@@ -202,6 +214,7 @@ let string_of_state vm =
         "cp = " ^ (string_of_int vm.cp) ^ " -> " 
       ^ (string_of_instruction (get_instruction vm)) ^ "\n"
       ^ "fp = " ^ (string_of_int vm.fp) ^ "\n"
+      (*^ "sp = " ^ (string_of_int vm.sp) ^ "\n" *)
       ^ "Stack = \n" ^(string_of_stack(vm.sp, vm.stack)) 
       ^ (if vm.hp = 0 then "" else string_of_heap vm) 
 
@@ -389,10 +402,10 @@ let case(i, vm) =
     let (c, vm1) = pop_top vm in 
     match c with 
     | STACK_HI a -> 
-	let vm2 = push(heap_to_stack_item(vm.heap.(a + 1)), vm1) in 
+	     let vm2 = push(heap_to_stack_item(vm.heap.(a + 1)), vm1) in 
          (match vm1.heap.(a) with 
-	 | HEAP_HEADER(_, HT_INR) -> goto(i, vm2) 
-	 | HEAP_HEADER(_, HT_INL) -> advance_cp vm2 
+	       | HEAP_HEADER(_, HT_INR) -> goto(i, vm2) 
+	       | HEAP_HEADER(_, HT_INL) -> advance_cp vm2 
          | _ -> Errors.complain "case: runtime error, expecting union header in heap" 
          ) 
     | _ -> Errors.complain "case: runtime error, expecting heap index on top of stack" 
@@ -443,13 +456,13 @@ let fetch fp vm = function
 let lookup fp vm vlp = push(fetch fp vm vlp, vm)
 
 let mk_closure = function 
-  | ((_, Some i), n, vm) -> 
+  | ((l, Some i), n, vm) -> 
     let (a, vm1) = allocate(2 + n, vm)       in 
     let header = HEAP_HEADER (2 + n, HT_CLOSURE) in 
     let code_address = HEAP_CI i             in 
     let _ = vm1.heap.(a)     <- header       in 
     let _ = vm1.heap.(a + 1) <- code_address in 
-    let rec aux m = 
+    let rec aux m =  (* putting associated values (in list l) in the heap *)
         if m = n 
         then () 
         else let v = stack_to_heap_item vm1.stack.(vm.sp - (m + 1)) in 
@@ -460,6 +473,7 @@ let mk_closure = function
     let vm2 = pop(n, vm1) in push(STACK_HI a, vm2) 
   | ((_, None), _, _) ->  Errors.complain "mk_closure : internal error, no address in closure!"
 
+(* Essentially, set code pointer to the right position & push return address & old fp*)
 let apply vm = 
     match stack_top vm with 
     | STACK_HI a -> 
@@ -565,11 +579,58 @@ let first_frame vm =
     in let return_index = STACK_RA 0 
     in push(return_index, push(saved_fp, vm))
 
+let anonymous label = 
+  let fc = String.get label 0 in
+  let sc = String.get label 1 in
+  (fc == 'L') && (sc >= '0') && (sc <= '9')
+
+
+let rec stack_trace vm = 
+  let current_fp = vm.fp in
+  if (current_fp != 0) then
+    let fun_pt = vm.stack.(vm.fp - 1) in
+    let arg = vm.stack.(vm.fp - 2) in
+    match vm.stack.(current_fp), fun_pt, arg with
+    |(STACK_FP saved_fp, STACK_HI fi, STACK_HI hi)->(
+      match vm.heap.(fi + 1) with
+      |HEAP_CI ci -> (
+        match get_instruction {vm with cp = ci} with
+        |LABEL l -> if (anonymous l) then
+            ("Call of " ^ "anonymous " ^ "(" ^ 
+              string_of_heap_value (hi) vm ^ ") from\n" ^
+              stack_trace {vm with fp = saved_fp})
+          else("Call of " ^ l ^ "(" ^ 
+              string_of_heap_value (hi) vm ^ ") from\n" ^
+              stack_trace {vm with fp = saved_fp})
+        |_ -> "Expecting a label here..."
+        )
+      |_ -> "Expecting a HEAP_CI here..."
+      )
+    |(STACK_FP saved_fp, STACK_HI fi, item)->(
+      match vm.heap.(fi + 1) with
+      |HEAP_CI ci -> (
+        match get_instruction {vm with cp = ci} with
+        |LABEL l -> if (anonymous l) then
+            ("Call of " ^ "anonymous function " ^ "(" ^ 
+              string_of_stack_item false item ^ ") from\n" ^
+              stack_trace {vm with fp = saved_fp})
+          else("Call of " ^ l ^ "(" ^ 
+              string_of_stack_item false item ^ ") from\n" ^
+              stack_trace {vm with fp = saved_fp})
+        |_ -> "Expecting a label here..."
+        )
+      |_ -> "Expecting a HEAP_CI here..."
+      )
+    |_ -> "Expecting a stack frame here..."
+  else "Call of main\n"
+
+
 let run l = 
     let vm = driver 1 (first_frame (initial_state l)) in 
     match vm.status with 
-    | Halted   -> vm 
-    | status -> Errors.complain ("run : stopped wth status " ^ (string_of_status status))
+    | Halted   -> vm
+    | status -> Errors.complain ("run : stopped wth status " ^ (string_of_status status)
+                                ^"\nStack trace: \n" ^ stack_trace(vm))
 
 
 
@@ -617,7 +678,7 @@ let positions l =
     in aux 1 l 
 
 
-let rec comp vmap = function 
+let rec comp vmap = function (* vmap = variable mapping *)
   | Unit           -> ([], [PUSH STACK_UNIT]) 
   | Boolean b      -> ([], [PUSH (STACK_BOOL b)])
   | Integer n      -> ([], [PUSH (STACK_INT n)]) 

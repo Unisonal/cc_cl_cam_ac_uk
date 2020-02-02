@@ -362,6 +362,7 @@ let rec comp = function
                       let def = [LABEL f; BIND x] @ c1 @ [SWAP; POP; RETURN] in 
                           (def @ defs1 @ defs2, 
                            [MK_CLOSURE((f, None)); BIND f] @ c2 @ [SWAP; POP])
+                      (*comp (LetFun(f,(x,e1),e2))*)
 let compile e = 
     let (defs, c) = comp e in 
     let result = c @               (* body of program *) 

@@ -311,7 +311,8 @@ let rec compile = function
  | App(e1, e2)    -> (compile e2)   (* I chose to evaluate arg first *) 
                      @ (compile e1) 
                      @ [APPLY; 
-                        SWAP; POP]  (* get rid of env left on stack *) 
+                        SWAP; POP]  (* This is essentially "leave_scope". -yh *)
+                        			(* get rid of env left on stack *) 
  | Lambda(x, e)   -> [MK_CLOSURE((BIND x) :: (compile e) @ leave_scope)]
  | LetFun(f, (x, body), e)    -> 
        (MK_CLOSURE((BIND x) :: (compile body) @ leave_scope)) :: 

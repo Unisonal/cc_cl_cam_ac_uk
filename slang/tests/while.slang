@@ -1,5 +1,5 @@
 
-let i : int ref = ref (-100)
+let i : int ref = ref (1)
 in
   begin
     while !i < 3 do

@@ -166,12 +166,11 @@ let rec interpret (e, env, store) =
                           )
     | LetFun(f, (x, body), e) -> 
        let new_env = update(env, (f, FUN (fun (v, s) -> interpret(body, update(env, (x, v)), s))))
-       in interpret(e, new_env, store) 
+       in interpret(e, new_env, store)
     | LetRecFun(f, (x, body), e) -> 
        let rec new_env g = (* a recursive environment! *) 
            if g = f then FUN (fun (v, s) -> interpret(body, update(new_env, (x, v)), s)) else env g
        in interpret(e, new_env, store) 
-
 (* env_empty : env *) 
 let empty_env = fun x -> complain (x ^ " is not defined!\n")
 
